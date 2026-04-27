@@ -71,31 +71,23 @@ def parse_num(s):
 
 # --- Scraping ---
 def get_fighter_urls():
-    """Get every fighter URL by paginating through a-z."""
+    """Get every fighter URL by hitting each letter with page=all."""
     fighter_urls = set()
     base = "http://www.ufcstats.com/statistics/fighters"
     for letter in "abcdefghijklmnopqrstuvwxyz":
-        page = 1
-        while True:
-            url = f"{base}?char={letter}&page={page}"
-            print(f"  Fetching list: {letter} page {page}")
-            soup = get_soup(url)
-            if not soup:
-                break
-            rows = soup.select("tr.b-statistics__table-row")
-            page_urls = []
-            for row in rows:
-                a = row.find("a", class_="b-link b-link_style_black")
-                if a and a.get("href"):
-                    page_urls.append(a["href"])
-            if not page_urls:
-                break
-            for u in page_urls:
-                fighter_urls.add(u)
-            # If we got fewer than expected results, stop paginating
-            if len(page_urls) < 100:
-                break
-            page += 1
+        url = f"{base}?char={letter}&page=all"
+        print(f"  Fetching list: {letter}")
+        soup = get_soup(url)
+        if not soup:
+            continue
+        rows = soup.select("tr.b-statistics__table-row")
+        added = 0
+        for row in rows:
+            a = row.find("a", class_="b-link b-link_style_black")
+            if a and a.get("href"):
+                fighter_urls.add(a["href"])
+                added += 1
+        print(f"    {added} fighters")
     return list(fighter_urls)
 
 def parse_fighter(url):
