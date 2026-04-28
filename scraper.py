@@ -8,6 +8,7 @@ import os
 import re
 import time
 import requests
+from datetime import datetime, date
 from bs4 import BeautifulSoup
 from supabase import create_client, Client
 
@@ -17,6 +18,29 @@ SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY")
 RATE_LIMIT_SECONDS = 1.5  # Time between requests
 HEADERS = {
     "User-Agent": "CageMetrics/1.0 (Personal UFC stats project)"
+}
+
+# UFC weight class event listing pages on ufcstats.com group fighters by division
+# via the rankings/events, but the cleanest source is the fighter listing pages
+# combined with each fighter's most recent fight weight class.
+# Strategy: collect URLs alphabetically (covers everyone), then derive division
+# from each fighter's most recent fight on their profile page.
+
+DIVISION_MAP = {
+    # Map ufcstats weight class strings to clean division names
+    "Strawweight": "Strawweight",
+    "Flyweight": "Flyweight",
+    "Bantamweight": "Bantamweight",
+    "Featherweight": "Featherweight",
+    "Lightweight": "Lightweight",
+    "Welterweight": "Welterweight",
+    "Middleweight": "Middleweight",
+    "Light Heavyweight": "Light Heavyweight",
+    "Heavyweight": "Heavyweight",
+    "Women's Strawweight": "Women's Strawweight",
+    "Women's Flyweight": "Women's Flyweight",
+    "Women's Bantamweight": "Women's Bantamweight",
+    "Women's Featherweight": "Women's Featherweight",
 }
 
 # --- Supabase client ---
@@ -69,6 +93,47 @@ def parse_num(s):
     except ValueError:
         return None
 
+def parse_dob(s):
+    """'Mar 15, 1990' -> date(1990, 3, 15). Returns None on failure."""
+    if not s or s == "--":
+        return None
+    try:
+        return datetime.strptime(s.strip(), "%b %d, %Y").date()
+    except ValueError:
+        return None
+
+def calc_age(dob):
+    """Calculate age from a date of birth."""
+    if not dob:
+        return None
+    today = date.today()
+    return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+
+def extract_division(soup):
+    """
+    Find the fighter's division by looking at their most recent fight row.
+    The fight history table has a 'Weight class' column we can read.
+    """
+    # The fight history table on a fighter profile
+    rows = soup.select("tr.b-fight-details__table-row")
+    for row in rows:
+        # Skip header
+        if row.get("class") and "b-fight-details__table-row_type_head" in row.get("class", []):
+            continue
+        cols = row.select("td.b-fight-details__table-col")
+        if not cols:
+            continue
+        # The weight class column on ufcstats fighter pages is typically the 7th column (index 6)
+        # Each cell contains a <p> with the value
+        for col in cols:
+            text = col.get_text(" ", strip=True)
+            for wc, clean in DIVISION_MAP.items():
+                if wc.lower() in text.lower():
+                    return clean
+        # Only check the first non-header row (most recent fight)
+        break
+    return None
+
 # --- Scraping ---
 def get_fighter_urls():
     """Get every fighter URL by hitting each letter with page=all."""
@@ -120,24 +185,29 @@ def parse_fighter(url):
         if not title:
             continue
         key = title.get_text(strip=True).rstrip(":").lower()
-        # Get the value text (everything in li except the title)
         title.extract()
         value = li.get_text(strip=True)
         info[key] = value
 
-    # Win method breakdown — scrape from career stats section
-    ko_wins = sub_wins = dec_wins = 0
-    # We won't have these by method easily — leave as 0 for now, can enhance later
+    # DOB and age
+    dob = parse_dob(info.get("dob"))
+    age = calc_age(dob)
+
+    # Division — pulled from most recent fight in fight history
+    division = extract_division(soup)
 
     fighter = {
         "name": name,
         "nickname": nickname or None,
+        "division": division,
         "wins": wins,
         "losses": losses,
         "draws": draws,
         "height_in": parse_height(info.get("height")),
         "reach_in": parse_reach(info.get("reach")),
         "stance": info.get("stance") if info.get("stance") and info.get("stance") != "--" else None,
+        "dob": dob.isoformat() if dob else None,
+        "age": age,
         "slpm": parse_num(info.get("slpm")),
         "str_acc": parse_pct(info.get("str. acc.")),
         "sapm": parse_num(info.get("sapm")),
@@ -178,7 +248,6 @@ def main():
                 failures += 1
         else:
             failures += 1
-        # Optional: print progress every 50 fighters
         if i % 50 == 0:
             print(f"  Progress: {successes} ok, {failures} failed")
 
