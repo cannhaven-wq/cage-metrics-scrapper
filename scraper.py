@@ -134,6 +134,12 @@ def extract_division(soup):
         break
     return None
 
+def derive_sex(division):
+    """Infer sex from division name. Women's divisions are explicitly labeled."""
+    if not division:
+        return None
+    return "F" if division.startswith("Women's") else "M"
+
 # --- Scraping ---
 def get_fighter_urls():
     """Get every fighter URL by hitting each letter with page=all."""
@@ -195,11 +201,13 @@ def parse_fighter(url):
 
     # Division — pulled from most recent fight in fight history
     division = extract_division(soup)
+    sex = derive_sex(division)
 
     fighter = {
         "name": name,
         "nickname": nickname or None,
         "division": division,
+        "sex": sex,
         "wins": wins,
         "losses": losses,
         "draws": draws,
