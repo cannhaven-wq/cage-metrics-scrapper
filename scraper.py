@@ -234,9 +234,18 @@ def parse_fighter(url):
     return fighter
 
 def upsert_fighter(fighter):
-    """Insert or update a fighter in Supabase, keyed on ufc_url."""
+    """Insert or update a fighter in Supabase, keyed on ufc_url.
+
+    Strips keys with None values before sending — a failed extraction
+    (e.g. division=None when the ufcstats page omits a weight-class column)
+    must NOT overwrite a previously-correct value. Without this filter,
+    a scraper re-run will null out every field the current page can't
+    re-derive."""
+    payload = {k: v for k, v in fighter.items() if v is not None}
+    if not payload.get("ufc_url"):
+        return False
     try:
-        supabase.table("fighters").upsert(fighter, on_conflict="ufc_url").execute()
+        supabase.table("fighters").upsert(payload, on_conflict="ufc_url").execute()
         return True
     except Exception as e:
         print(f"  ! Supabase error for {fighter.get('name')}: {e}")
