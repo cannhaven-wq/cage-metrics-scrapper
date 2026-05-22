@@ -27,7 +27,17 @@ HEADERS = {
 # from each fighter's most recent fight on their profile page.
 
 DIVISION_MAP = {
-    # Map ufcstats weight class strings to clean division names
+    # Order matters: extract_division iterates this dict and substring-matches
+    # against the fight-row text. More-specific names must come first so they
+    # win over their substring-prefix peers.
+    #   - Women's divisions before men's (e.g. "Women's Strawweight" must match
+    #     before "Strawweight", or every woman becomes a man.)
+    #   - "Light Heavyweight" before "Heavyweight" for the same reason.
+    "Women's Strawweight": "Women's Strawweight",
+    "Women's Flyweight": "Women's Flyweight",
+    "Women's Bantamweight": "Women's Bantamweight",
+    "Women's Featherweight": "Women's Featherweight",
+    "Light Heavyweight": "Light Heavyweight",
     "Strawweight": "Strawweight",
     "Flyweight": "Flyweight",
     "Bantamweight": "Bantamweight",
@@ -35,12 +45,7 @@ DIVISION_MAP = {
     "Lightweight": "Lightweight",
     "Welterweight": "Welterweight",
     "Middleweight": "Middleweight",
-    "Light Heavyweight": "Light Heavyweight",
     "Heavyweight": "Heavyweight",
-    "Women's Strawweight": "Women's Strawweight",
-    "Women's Flyweight": "Women's Flyweight",
-    "Women's Bantamweight": "Women's Bantamweight",
-    "Women's Featherweight": "Women's Featherweight",
 }
 
 # --- Supabase client ---
