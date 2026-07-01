@@ -7,18 +7,16 @@ Rate-limited to be polite to ufcstats.com servers.
 import os
 import re
 import time
-import requests
 from datetime import datetime, date
-from bs4 import BeautifulSoup
 from supabase import create_client, Client
+
+import challenge
 
 # --- Config ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY")
 RATE_LIMIT_SECONDS = 1.5  # Time between requests
-HEADERS = {
-    "User-Agent": "CageMetrics/1.0 (Personal UFC stats project)"
-}
+MAX_ATTEMPTS = 3  # Retries per URL for transient errors
 
 # UFC weight class event listing pages on ufcstats.com group fighters by division
 # via the rankings/events, but the cleanest source is the fighter listing pages
@@ -54,17 +52,29 @@ if not SUPABASE_URL or not SUPABASE_SECRET_KEY:
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SECRET_KEY)
 
+# One session per run: challenge.py's proof-of-work clearance cookie lives on
+# the session, so every request after the first solve passes the interstitial.
+session = challenge.make_session()
+
 # --- Helpers ---
 def get_soup(url):
-    """Fetch a URL and return BeautifulSoup, with rate limiting."""
-    time.sleep(RATE_LIMIT_SECONDS)
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=20)
-        r.raise_for_status()
-        return BeautifulSoup(r.text, "html.parser")
-    except Exception as e:
-        print(f"  ! Error fetching {url}: {e}")
-        return None
+    """Fetch a URL and return BeautifulSoup, with rate limiting.
+
+    Solves the UFCStats proof-of-work interstitial (via challenge.py — a plain
+    GET returns the challenge page with HTTP 200, which used to parse as an
+    empty page) and retries transient errors with backoff."""
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        time.sleep(RATE_LIMIT_SECONDS)
+        try:
+            soup = challenge.get_soup(session, url, timeout=20)
+            if soup is not None:
+                return soup
+            print(f"  ! Challenge unsolved for {url} (attempt {attempt})")
+        except Exception as e:
+            print(f"  ! Error fetching {url} (attempt {attempt}): {e}")
+        if attempt < MAX_ATTEMPTS:
+            time.sleep(2 ** attempt)  # 2s, 4s
+    return None
 
 def parse_height(s):
     """'5' 11"' -> 71 inches"""
@@ -257,6 +267,11 @@ def main():
     print("Step 1: Collecting fighter URLs...")
     urls = get_fighter_urls()
     print(f"Found {len(urls)} fighters.")
+    if not urls:
+        # The roster is never actually empty — zero URLs means the scrape is
+        # broken (blocked, markup change, ...). Exit non-zero so the scheduled
+        # run shows as failed instead of quietly doing nothing.
+        raise SystemExit("No fighter URLs found — scrape is broken, refusing to exit green")
 
     print("Step 2: Scraping fighter profiles...")
     successes = failures = 0
@@ -274,6 +289,8 @@ def main():
             print(f"  Progress: {successes} ok, {failures} failed")
 
     print(f"\n=== Done. {successes} fighters saved, {failures} failures. ===")
+    if successes == 0:
+        raise SystemExit("0 fighters saved — run failed, refusing to exit green")
 
 if __name__ == "__main__":
     main()
