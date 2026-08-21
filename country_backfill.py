@@ -92,6 +92,8 @@ COUNTRY_CODES = {
     "turkiye": "TR", "north macedonia": "MK", "macedonia": "MK",
     "montenegro": "ME", "albania": "AL", "kosovo": "XK", "malta": "MT",
     "luxembourg": "LU", "monaco": "MC", "andorra": "AD",
+    "anguilla": "AI", "solomon islands": "SB", "cabo verde": "CV",
+    "korea": "KR",  # ufc.com prints this for South Korean fighters
 }
 
 # Wikidata prints a handful of these differently again.
@@ -274,6 +276,31 @@ def load_fighters(all_fighters, recheck, limit, missing=False, upcoming=False):
     return rows[:limit] if limit else rows
 
 
+def remap():
+    """Recompute country/country_code from birth_place already on record."""
+    rows, offset, fixed, still = [], 0, 0, []
+    while True:
+        page = sb("fighters?select=id,name,birth_place&birth_place=not.is.null"
+                  "&country_code=is.null&order=id&limit=1000&offset=%d" % offset)
+        if not page:
+            break
+        rows += page
+        offset += 1000
+    log("%d fighters have a birthplace but no ISO code" % len(rows))
+    for r in rows:
+        country, code = normalise_country(r["birth_place"])
+        if not code:
+            still.append(r["birth_place"])
+            continue
+        sb("fighters?id=eq." + str(r["id"]), method="PATCH",
+           body={"country": country, "country_code": code},
+           extra_headers={"Prefer": "return=minimal"})
+        fixed += 1
+    log("remapped %d" % fixed)
+    if still:
+        log("still unmapped: %s" % ", ".join(sorted(set(still))))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--all", action="store_true", help="every fighter, not just the active roster")
@@ -281,6 +308,9 @@ def main():
     ap.add_argument("--recheck", action="store_true", help="retry fighters already looked up")
     ap.add_argument("--missing", action="store_true",
                     help="only fighters with no country_code yet (re-run after adding ISO codes)")
+    ap.add_argument("--remap", action="store_true",
+                    help="re-derive country/country_code from the stored birth_place, "
+                         "no network — use after adding entries to COUNTRY_CODES")
     ap.add_argument("--upcoming", action="store_true",
                     help="only fighters booked on an upcoming card (catches debutants, "
                          "who have no last_fight_date and so miss the active-roster filter)")
@@ -288,6 +318,10 @@ def main():
 
     if not SUPABASE_URL or not SUPABASE_SECRET_KEY:
         sys.exit("SUPABASE_URL / SUPABASE_SECRET_KEY not set.")
+
+    if args.remap:
+        remap()
+        return
 
     fighters = load_fighters(args.all, args.recheck, args.limit, args.missing, args.upcoming)
     log("%d fighters to look up" % len(fighters))
